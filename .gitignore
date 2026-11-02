@@ -1,0 +1,17 @@
+# Build output and distributable binaries are uploaded as Release assets.
+/.build/
+/release/
+/latest-scroll-montage.jpg
+
+# Recordings, extracted score images and local diagnostics stay on this PC.
+/source/captures/
+/source/exports/
+/source/omr_output/
+/source/.test-tmp/
+/source/tesseract-extra-tessdata/
+/source/tests/*-smoke.py
+
+# Generated Python / PyInstaller files.
+__pycache__/
+*.py[cod]
+/source/*.spec
