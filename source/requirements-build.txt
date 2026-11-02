@@ -1,0 +1,4 @@
+Pillow>=11.0
+pyinstaller>=6.0
+pywebview>=6.0
+yt-dlp>=2025.1.15
