@@ -1,0 +1,6 @@
+Audiveris source: https://github.com/Audiveris/audiveris
+Tesseract source: https://github.com/tesseract-ocr/tesseract
+Tesseract legacy+LSTM English model: https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata
+Tesseract Simplified Chinese model: https://github.com/tesseract-ocr/tessdata_fast/blob/main/chi_sim.traineddata
+BBDown source and releases: https://github.com/nilaoda/BBDown
+yt-dlp source: https://github.com/yt-dlp/yt-dlp
