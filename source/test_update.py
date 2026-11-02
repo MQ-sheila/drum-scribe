@@ -9,6 +9,7 @@ import pathlib
 import tempfile
 import unittest
 import unittest.mock
+import urllib.error
 import zipfile
 
 import update_helper
@@ -28,6 +29,23 @@ def archive_bytes(version: str = "0.8.91") -> bytes:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_latest_release_falls_back_when_api_rate_limited(self):
+        payload = {"tag_name": "v0.8.92", "assets": []}
+        calls = []
+
+        def fake_open(request, timeout):
+            calls.append(request.full_url)
+            if "api.github.com" in request.full_url:
+                raise urllib.error.HTTPError(request.full_url, 403, "rate limited", {}, None)
+            return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+        with unittest.mock.patch.object(update_service.urllib.request, "urlopen", side_effect=fake_open):
+            self.assertEqual(update_service.fetch_latest_payload("MQ-sheila/drum-scribe"), payload)
+        self.assertEqual(calls, [
+            "https://api.github.com/repos/MQ-sheila/drum-scribe/releases/latest",
+            "https://raw.githubusercontent.com/MQ-sheila/drum-scribe/refs/heads/main/latest.json",
+        ])
+
     def test_release_requires_newer_version_and_digest(self):
         raw = archive_bytes()
         asset = {"name": "DrumScribe-win-x64.zip", "size": len(raw),

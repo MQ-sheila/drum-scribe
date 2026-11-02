@@ -38,6 +38,22 @@ def read_json(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def fetch_latest_payload(repository: str) -> dict:
+    """Use the release API, with a public manifest when its shared-IP quota is full."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}
+    api_url = f"https://api.github.com/repos/{repository}/releases/latest"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(api_url, headers=headers), timeout=15) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code not in (403, 429):
+            raise
+    manifest_url = f"https://raw.githubusercontent.com/{repository}/refs/heads/main/latest.json"
+    with urllib.request.urlopen(urllib.request.Request(manifest_url, headers={
+        "User-Agent": USER_AGENT}), timeout=15) as response:
+        return json.load(response)
+
+
 def release_from_payload(payload: dict, current: str, asset_name: str) -> dict | None:
     version = str(payload.get("tag_name", ""))
     if version_tuple(version) <= version_tuple(current):
@@ -138,11 +154,7 @@ class UpdateManager:
         self._set(state="checking", message="正在检查更新…")
         try:
             owner, repo = self.repository.split("/", 1)
-            url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-            request = urllib.request.Request(url, headers={
-                "Accept": "application/vnd.github+json", "User-Agent": USER_AGENT})
-            with urllib.request.urlopen(request, timeout=15) as response:
-                payload = json.load(response)
+            payload = fetch_latest_payload(self.repository)
             payload["owner"], payload["repo"] = owner, repo
             release = release_from_payload(payload, self.current_version, self.asset_name)
             self._release = release
