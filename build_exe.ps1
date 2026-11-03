@@ -1,4 +1,4 @@
-param([switch]$Stage)
+﻿param([switch]$Stage)
 
 $ErrorActionPreference = 'Stop'
 
