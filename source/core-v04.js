@@ -290,12 +290,14 @@
     context.drawImage(source, 0, 0, targetWidth, targetHeight);
     const image = context.getImageData(0, 0, targetWidth, targetHeight);
     const ink = new Float32Array(targetHeight);
+      const softInk = new Float32Array(targetHeight);
     const white = new Float32Array(targetHeight);
     const chroma = new Float32Array(targetHeight);
     let whitePixels = 0;
 
     for (let y = 0; y < targetHeight; y += 1) {
       let dark = 0;
+        let softDark = 0;
       let pale = 0;
       let coloured = 0;
       for (let x = 0; x < targetWidth; x += 1) {
@@ -308,6 +310,7 @@
         const saturation = maximum - minimum;
         const gray = (red * 3 + green * 6 + blue) / 10;
         if (saturation < 58 && gray < 184) dark += 1;
+          if (saturation < 58 && gray < 220) softDark += 1;
         if (saturation >= 58 && gray < 230) coloured += 1;
         if (saturation < 34 && gray > 220) {
           pale += 1;
@@ -315,6 +318,7 @@
         }
       }
       ink[y] = dark / targetWidth;
+        softInk[y] = softDark / targetWidth;
       white[y] = pale / targetWidth;
       chroma[y] = coloured / targetWidth;
     }
@@ -323,14 +327,18 @@
     if (whitePixels / Math.max(1, targetWidth * targetHeight) < 0.17) return [];
 
     const peakRows = [];
+      const support = new Float32Array(targetHeight);
+      for (let y = 0; y < targetHeight; y += 1) {
+        support[y] = Math.max(ink[y], softInk[y] * 0.7);
+      }
     let runStart = -1;
     const finishRun = (runEnd) => {
       if (runStart < 0) return;
       let best = runStart;
       for (let y = runStart + 1; y <= runEnd; y += 1) {
-        if (ink[y] > ink[best]) best = y;
+          if (support[y] > support[best]) best = y;
       }
-      peakRows.push({ y: best, support: ink[best], white: white[best] });
+        peakRows.push({ y: best, support: support[best], white: white[best] });
       runStart = -1;
     };
 
@@ -338,8 +346,19 @@
       const local = (ink[Math.max(0, y - 2)] + ink[Math.max(0, y - 1)] +
         ink[y] + ink[Math.min(targetHeight - 1, y + 1)] +
         ink[Math.min(targetHeight - 1, y + 2)]) / 5;
-      const lineLike = ink[y] >= Math.max(0.105, local * 1.16) &&
-        ink[y] + white[y] >= 0.64;
+        const softLocal = (softInk[Math.max(0, y - 2)] + softInk[Math.max(0, y - 1)] +
+          softInk[y] + softInk[Math.min(targetHeight - 1, y + 1)] +
+          softInk[Math.min(targetHeight - 1, y + 2)]) / 5;
+        // A large translucent logo can cover most of a printed staff line.
+        // Keep the neutral part of a strong line when the missing width is
+        // chromatic; otherwise the entire system disappears from the frame.
+        const neutralCoverage = ink[y] + white[y];
+        const occludedLine = ink[y] >= 0.22 &&
+          (chroma[y] >= 0.18 || neutralCoverage >= 0.24);
+        const darkLine = ink[y] >= Math.max(0.105, local * 1.16) &&
+          (neutralCoverage >= 0.64 || occludedLine);
+        const fadedLine = softInk[y] >= 0.55 && softInk[y] >= softLocal * 1.25;
+        const lineLike = darkLine || fadedLine;
       if (lineLike) {
         if (runStart < 0) runStart = y;
       } else {
@@ -947,6 +966,82 @@
   // A vertically scrolling score revisits each staff in several consecutive
   // frames. Match its physical position before comparing the music: repeated
   // grooves can look identical even when they belong to different measures.
+  function scrollFrameMask(source) {
+    if (!source?.width || !source?.height || typeof document === 'undefined') return null;
+    const width = Math.min(800, source.width);
+    const height = Math.min(480, source.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(source, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height).data;
+    const columns = [];
+    // Printed row numbers live at the left edge. Weight that area so repeated
+    // drum grooves cannot make an earlier page look like a forward scroll.
+    for (let repeat = 0; repeat < 3; repeat += 1) {
+      for (let x = Math.round(width * .03); x < width * .12; x += 4) columns.push(x);
+    }
+    for (let x = Math.round(width * .12); x < width * .27; x += 4) columns.push(x);
+    for (let x = Math.round(width * .70); x < width * .97; x += 4) columns.push(x);
+    const rows = Math.ceil(height / 2);
+    const mask = new Uint8Array(rows * columns.length);
+    for (let y = 0; y < rows; y += 1) {
+      for (let xIndex = 0; xIndex < columns.length; xIndex += 1) {
+        const index = ((y * 2) * width + columns[xIndex]) * 4;
+        const red = pixels[index];
+        const green = pixels[index + 1];
+        const blue = pixels[index + 2];
+        const gray = (red * 3 + green * 6 + blue) / 10;
+        mask[y * columns.length + xIndex] =
+          Math.max(red, green, blue) - Math.min(red, green, blue) < 55 && gray < 220 ? 1 : 0;
+      }
+    }
+    return { mask, rows, columns: columns.length, scale: source.height / rows,
+      aspect: source.width / source.height };
+  }
+
+  function scrollFrameShift(previous, current) {
+    if (!previous || !current || Math.abs(previous.aspect - current.aspect) > .08 ||
+        Math.abs(previous.rows - current.rows) > 4 || previous.columns !== current.columns) return null;
+    const rows = Math.min(previous.rows, current.rows);
+    const columns = previous.columns;
+    const limit = Math.floor(rows * .79);
+    let best = null;
+    let exact = null;
+    for (let shift = -limit; shift <= limit; shift += 1) {
+      const oldStart = Math.max(0, shift);
+      const newStart = Math.max(0, -shift);
+      const overlap = rows - Math.abs(shift);
+      let mismatch = 0;
+      let inkUnion = 0;
+      for (let y = 0; y < overlap; y += 1) {
+        const oldOffset = (oldStart + y) * columns;
+        const newOffset = (newStart + y) * columns;
+        for (let x = 0; x < columns; x += 1) {
+          const oldInk = previous.mask[oldOffset + x];
+          const newInk = current.mask[newOffset + x];
+          mismatch += oldInk !== newInk ? 1 : 0;
+          inkUnion += oldInk | newInk;
+        }
+      }
+      const rawScore = mismatch / (overlap * columns);
+      if (rawScore <= .005 && (!exact || Math.abs(shift) < Math.abs(exact.shift))) {
+        exact = { shift };
+      }
+      // Blank margins make a wrong shift look deceptively close. Compare the
+      // printed ink too, then favor forward progress when patterns repeat.
+      const inkDistance = mismatch / Math.max(1, inkUnion);
+      const rankedScore = rawScore + inkDistance * .1 +
+        (shift < 0 ? .025 : -shift / rows * .02);
+      if (!best || rankedScore < best.rankedScore) {
+        best = { shift: Math.round(shift * previous.scale), rawScore, rankedScore };
+      }
+    }
+    if (exact) return Math.round(exact.shift * previous.scale);
+    return best?.rawScore <= .18 ? best.shift : null;
+  }
+
   function mergeScrollingSequences(sequences) {
     const groups = (sequences || []).map((sequence) =>
       (sequence.rows || sequence || []).filter(Boolean));
@@ -963,11 +1058,24 @@
       .map((value, index) => value - values[index]).filter((value) => value > 15));
     if (spacings.length < 3) return null;
     const spacing = median(spacings);
+      const frameMasks = groups.map((rows) => scrollFrameMask(rows[0]?.sourceCanvas));
+      const frameShifts = frameMasks.slice(1).map((mask, index) =>
+        Math.min(groups[index].length, groups[index + 1].length) >= 2
+          ? scrollFrameShift(frameMasks[index], mask) : null);
+      const imageAligned = frameShifts.filter((shift) => shift != null).length >=
+        Math.max(3, Math.ceil(frameShifts.length * .6));
     const shiftTolerance = Math.max(3, spacing * 0.07);
     const offsets = [0];
     for (let index = 1; index < positions.length; index += 1) {
       const previous = positions[index - 1];
       const current = positions[index];
+        if (imageAligned) {
+          const detectedShift = frameShifts[index - 1];
+          const fallbackShift = previous.length && current.length
+            ? Math.max(0, previous[previous.length - 1] + spacing - current[0]) : spacing;
+          offsets.push(offsets[index - 1] + (detectedShift == null ? fallbackShift : detectedShift));
+          continue;
+        }
       // A capture group can change because of a cursor or an overlay while
       // the score itself remains stationary. Treat that as zero scroll only
       // when at least two score rows match visually at the same height.
@@ -1037,7 +1145,7 @@
         candidates: unique.slice(0, 8),
       };
     });
-    return { rows, removedDuplicates: located.length - rows.length, scrollOffsets: offsets };
+      return { rows, removedDuplicates: located.length - rows.length, scrollOffsets: offsets };
   }
 
   function notationClarity(candidate) {
@@ -1165,12 +1273,15 @@
     return { rows: result, warnings, removedDuplicates };
   }
 
-  function dedupeRows(rows) {
+  function dedupeRows(rows, options = {}) {
     const output = [];
     const duplicates = [];
     (rows || []).forEach((row) => {
       const match = output.slice(-24).find((candidate) => {
         if (candidate.sequenceIndex === row.sequenceIndex) return false;
+          if (Number.isFinite(options.maxSequenceGap) &&
+              Number.isInteger(candidate.sequenceIndex) && Number.isInteger(row.sequenceIndex) &&
+              Math.abs(candidate.sequenceIndex - row.sequenceIndex) > options.maxSequenceGap) return false;
         const lm = measureOf(candidate);
         const rm = measureOf(row);
         if (lm != null && rm != null && lm !== rm) return false;

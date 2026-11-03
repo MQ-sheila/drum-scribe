@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import functools
+import faulthandler
 import hashlib
 import os
 import pathlib
 import sys
+import tempfile
 import threading
+import traceback
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -20,22 +24,24 @@ APP_ROOT = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve(
 
 class DesktopApi:
     def __init__(self, manager: update_service.UpdateManager):
-        self.manager = manager
-        self.window = None
+        # pywebview recursively scans public attributes when exposing the JS
+        # API. The window refers back to this object, so both must stay private.
+        self._manager = manager
+        self._window = None
 
     def update_status(self) -> dict:
-        return self.manager.status()
+        return self._manager.status()
 
     def check_for_updates(self) -> dict:
-        return self.manager.check()
+        return self._manager.check()
 
     def download_update(self) -> dict:
-        return self.manager.start_download()
+        return self._manager.start_download()
 
     def install_update(self) -> dict:
-        result = self.manager.launch_install()
-        if result["state"] == "installing" and self.window:
-            threading.Timer(0.3, self.window.destroy).start()
+        result = self._manager.launch_install()
+        if result["state"] == "installing" and self._window:
+            threading.Timer(0.3, self._window.destroy).start()
         return result
 
 
@@ -76,7 +82,13 @@ class QuietStaticHandler(SimpleHTTPRequestHandler):
 def serve(server: ThreadingHTTPServer) -> None:
     server.serve_forever(poll_interval=0.25)
 
-def main() -> None:
+def _mark_startup(log, stage: str) -> None:
+    print(f"{datetime.now().isoformat(timespec='seconds')} pid={os.getpid()} {stage}",
+          file=log, flush=True)
+
+
+def _run_application(startup_log, data_dir: pathlib.Path) -> None:
+    _mark_startup(startup_log, "starting")
     manager = update_service.UpdateManager(APP_ROOT, pathlib.Path(sys.executable).resolve().parent)
     desktop_api = DesktopApi(manager)
     health_marker = update_health_marker()
@@ -97,6 +109,7 @@ def main() -> None:
         server.daemon_threads = True
         server.block_on_close = False
         threading.Thread(target=serve, args=(server,), daemon=True).start()
+    _mark_startup(startup_log, "servers-ready")
     try:
         build_id = hashlib.sha256((APP_ROOT / "index.html").read_bytes()).hexdigest()[:12]
         window = webview.create_window(
@@ -108,12 +121,25 @@ def main() -> None:
             min_size=(980, 680),
             resizable=True,
         )
-        desktop_api.window = window
-        if health_marker:
-            def report_healthy() -> None:
+        desktop_api._window = window
+        def report_healthy() -> None:
+            faulthandler.cancel_dump_traceback_later()
+            _mark_startup(startup_log, "webview-loaded")
+            if health_marker:
                 health_marker.write_text("ready", encoding="ascii")
-            window.events.loaded += report_healthy
-        webview.start(gui="edgechromium", debug=False, private_mode=False)
+        window.events.loaded += report_healthy
+        # A separate private WebView2 profile avoids a stale or locked shared
+        # pywebview profile from blocking the UI and every Python HTTP thread.
+        with tempfile.TemporaryDirectory(prefix="webview-", dir=data_dir,
+                                         ignore_cleanup_errors=True) as profile_dir:
+            _mark_startup(startup_log, "webview-starting")
+            faulthandler.dump_traceback_later(20, file=startup_log)
+            try:
+                webview.start(gui="edgechromium", debug=False, private_mode=True,
+                              storage_path=profile_dir)
+            finally:
+                faulthandler.cancel_dump_traceback_later()
+                _mark_startup(startup_log, "webview-stopped")
     finally:
         # Closing the desktop window is also cancellation: stop Audiveris,
         # Tesseract, MuseScore conversion, and every descendant process first.
@@ -123,6 +149,20 @@ def main() -> None:
         static_server.server_close()
         omr_server.server_close()
         omr_service.terminate_active_processes()
+
+
+def main() -> None:
+    data_dir = pathlib.Path(os.environ["LOCALAPPDATA"]) / "DrumScribe"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with (data_dir / "startup.log").open("a", encoding="utf-8", buffering=1) as log:
+        faulthandler.enable(file=log, all_threads=True)
+        try:
+            _run_application(log, data_dir)
+        except BaseException:
+            traceback.print_exc(file=log)
+            raise
+        finally:
+            faulthandler.disable()
 
 if __name__ == "__main__":
     main()

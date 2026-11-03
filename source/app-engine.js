@@ -1652,8 +1652,8 @@
   function rebuildFromRaw() {
     if (!state.rawSequences.length) return;
 
-    // Keep every captured row until its printed measure number is known.
-    // Repeated drum grooves look alike and visual-only merging loses whole pages.
+    // Video frames can revisit the same printed row many times. Merge only
+    // sequence overlaps that have visual evidence, keeping unmatched rows.
     const horizontal = state.settings.mode === 'horizontal';
     const singleCapture = horizontal || core.isSingleLineCapture(state.settings.mode, state.rawSequences);
     const capturedVideo = state.captureGroups.length > 0;
@@ -1666,13 +1666,13 @@
       ? core.mergeAdjacentCaptureRows(state.rawSequences) : null;
     state.scrollingCapture = !!(scrollMerge || horizontalMerge);
     state.adjacentCapture = !!adjacentMerge;
-    const merged = horizontalMerge || scrollMerge || adjacentMerge || (capturedPages
-      ? { rows: state.rawSequences.flatMap((sequence) => sequence.rows) }
-      : core.mergeRowSequences(state.rawSequences, {
+    const merged = horizontalMerge || scrollMerge || adjacentMerge || core.mergeRowSequences(state.rawSequences, {
         dedupeStrength: state.settings.dedupeStrength,
         threshold: 0.36 - state.settings.dedupeStrength * 0.07,
-      }));
-    const deduped = horizontal || capturedPages || scrollMerge || adjacentMerge
+      });
+    const deduped = scrollMerge
+      ? core.dedupeRows(merged.rows, { maxSequenceGap: 6 })
+      : horizontal || capturedPages || adjacentMerge
       ? { rows: merged.rows }
       : core.dedupeRows(merged.rows, {
         strength: state.settings.dedupeStrength,

@@ -23,6 +23,7 @@ DOWNLOADS.mkdir(parents=True, exist_ok=True)
 APP_ROOT = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent))
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_BARE_URL = re.compile(r"(?<![\w@./-])(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s<>\"']+", re.IGNORECASE)
 _JOBS: dict[str, dict] = {}
 _LOCK = threading.RLock()
 _ACTIVE: str | None = None
@@ -39,9 +40,11 @@ def parse_video_link(text: str) -> tuple[str, str]:
     if not isinstance(text, str) or len(text) > 4096:
         raise ValueError("请粘贴一个视频链接")
     match = _URL.search(text)
-    if not match:
-        raise ValueError("没有找到 http 或 https 视频链接")
-    url = match.group().rstrip(".,;!?，。；！？)]}）")
+    bare = _BARE_URL.search(text) if not match else None
+    if not match and not bare:
+        raise ValueError("没有找到视频链接")
+    url = ((match.group() if match else "https://" + bare.group())
+           .rstrip(".,;!?，。；！？)]}）"))
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().rstrip(".")
     if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
