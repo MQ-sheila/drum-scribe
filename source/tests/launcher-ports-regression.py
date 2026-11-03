@@ -3,25 +3,45 @@
 from __future__ import annotations
 
 import http.client
+import os
 import pathlib
 import re
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+project = pathlib.Path(__file__).resolve().parents[2]
+os.environ["LOCALAPPDATA"] = str(project / ".build" / "launcher-test-data")
+sys.path.insert(0, str(project / "source"))
 import packaged_launcher  # noqa: E402
 
 
 window_urls = []
+windows = []
 
 
-def create_window(_title: str, url: str, **_options: object) -> None:
+class LoadedEvent:
+    def __iadd__(self, callback):
+        self.callback = callback
+        return self
+
+
+def create_window(_title: str, url: str, **_options: object):
     window_urls.append(url)
+    window = SimpleNamespace(events=SimpleNamespace(loaded=LoadedEvent()),
+                             js_api=_options["js_api"])
+    windows.append(window)
+    return window
 
 
-def start(**_options: object) -> None:
+def start(**options: object) -> None:
+    assert options["private_mode"] is True
+    assert pathlib.Path(options["storage_path"]).is_dir()
+    api = windows[-1].js_api
+    assert api._window is windows[-1]
+    assert all(name.startswith("_") for name in vars(api))
     page = urlsplit(window_urls[-1])
     assert page.hostname == "127.0.0.1"
     static = http.client.HTTPConnection(page.hostname, page.port, timeout=5)
@@ -53,10 +73,12 @@ def start(**_options: object) -> None:
     response.read()
     assert response.status == 403
     backend.close()
+    windows[-1].events.loaded.callback()
 
 
 with patch.object(packaged_launcher.webview, "create_window", side_effect=create_window), \
      patch.object(packaged_launcher.webview, "start", side_effect=start), \
+     patch.object(packaged_launcher.update_service, "UpdateManager", return_value=object()), \
      patch.object(packaged_launcher.omr_service, "terminate_active_processes"):
     packaged_launcher.main()
 

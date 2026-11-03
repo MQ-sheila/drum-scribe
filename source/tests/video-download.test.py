@@ -58,6 +58,9 @@ class VideoDownloadTest(unittest.TestCase):
         self.assertEqual(video_download.parse_video_link(
             "https://v.douyin.com/abc")[1], "yt-dlp")
         self.assertEqual(video_download.parse_video_link(
+            "bilibili.com/video/BV16vn966EkZ/?spm_id_from=333.1387.favlist.content.click"),
+            ("https://bilibili.com/video/BV16vn966EkZ/?spm_id_from=333.1387.favlist.content.click", "bilibili"))
+        self.assertEqual(video_download.parse_video_link(
             "https://xhslink.com/abc")[1], "yt-dlp")
         for url in ("http://127.0.0.1/private",):
             with self.assertRaises(ValueError):
