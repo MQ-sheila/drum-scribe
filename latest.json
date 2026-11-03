@@ -1,12 +1,12 @@
 {
-  "tag_name": "v0.8.92",
-  "body": "DrumScribe 0.8.92",
+  "tag_name": "v0.8.96",
+  "body": "DrumScribe 0.8.96",
   "assets": [
     {
       "name": "DrumScribe-win-x64.zip",
-      "size": 302624052,
-      "digest": "sha256:521d65e6e876989039ecf57948193bdcedac3028eaea6644d3770cd50511054e",
-      "browser_download_url": "https://github.com/MQ-sheila/drum-scribe/releases/download/v0.8.92/DrumScribe-win-x64.zip"
+      "size": 302626153,
+      "digest": "sha256:de660864563f1392c9a8cb334d56356884088f054cb10fff3c3bbc12b025b6c6",
+      "browser_download_url": "https://github.com/MQ-sheila/drum-scribe/releases/download/v0.8.96/DrumScribe-win-x64.zip"
     }
   ]
 }
